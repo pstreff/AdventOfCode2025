@@ -6,8 +6,10 @@ import (
 	"embed"
 	"fmt"
 	"log"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 //go:embed *.txt
@@ -106,27 +108,53 @@ func part2() {
 		points = append(points, Point{x, y})
 	}
 
+	numWorkers := runtime.NumCPU()
+	type job struct {
+		i, j int
+	}
+
+	jobs := make(chan job, 1024)
+	results := make(chan int, 1024)
+
+	var wg sync.WaitGroup
+
+	wg.Add(numWorkers)
+
+	for w := 0; w < numWorkers; w++ {
+		go func() {
+			defer wg.Done()
+			for job := range jobs {
+				sq := Square{points[job.i], points[job.j]}
+				fmt.Printf("Checking Square (%d,%d) (%d,%d)\n", points[job.i].X, points[job.i].Y, points[job.j].X, points[job.j].Y)
+
+				if !RectangleInsidePolygon(sq, points) {
+					continue
+				}
+
+				results <- sq.Area()
+			}
+		}()
+	}
+
+	go func() {
+		for i := 0; i < len(points); i++ {
+			for j := i + 1; j < len(points); j++ {
+				jobs <- job{i, j}
+			}
+		}
+		close(jobs)
+	}()
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
 	largestArea := 0
 
-	for i := 0; i < len(points); i++ {
-		for j := i + 1; j < len(points); j++ {
-			if i == j {
-				continue
-			}
-
-			sq := Square{points[i], points[j]}
-
-			fmt.Printf("Checking Square (%d,%d) (%d,%d)\n", points[i].X, points[i].Y, points[j].X, points[j].Y)
-
-			if !RectangleInsidePolygon(sq, points) {
-				continue
-			}
-
-			sqArea := sq.Area()
-
-			if sqArea > largestArea {
-				largestArea = sqArea
-			}
+	for area := range results {
+		if area > largestArea {
+			largestArea = area
 		}
 	}
 
@@ -199,34 +227,24 @@ func RectangleInsidePolygon(sq Square, polygon []Point) bool {
 	minX, maxX := min(sq.P1.X, sq.P2.X), max(sq.P1.X, sq.P2.X)
 	minY, maxY := min(sq.P1.Y, sq.P2.Y), max(sq.P1.Y, sq.P2.Y)
 
-	result := make(chan bool, 1)
-
-	go func() {
-		for x := minX; x <= maxX; x++ {
-			if !PointInPolygon(Point{x, minY}, polygon) {
-				result <- false
-				return
-			}
-
-			if !PointInPolygon(Point{x, maxY}, polygon) {
-				result <- false
-				return
-			}
+	for x := minX; x <= maxX; x++ {
+		if !PointInPolygon(Point{x, minY}, polygon) {
+			return false
 		}
 
-		for y := minY + 1; y < maxY; y++ {
-			if !PointInPolygon(Point{minX, y}, polygon) {
-				result <- false
-				return
-			}
-
-			if !PointInPolygon(Point{minX, y}, polygon) {
-				result <- false
-				return
-			}
+		if !PointInPolygon(Point{x, maxY}, polygon) {
+			return false
 		}
-		result <- true
-	}()
+	}
 
-	return <-result
+	for y := minY + 1; y < maxY; y++ {
+		if !PointInPolygon(Point{minX, y}, polygon) {
+			return false
+		}
+
+		if !PointInPolygon(Point{minX, y}, polygon) {
+			return false
+		}
+	}
+	return true
 }
