@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 //go:embed *.txt
@@ -114,24 +115,36 @@ func part2() {
 	}
 
 	jobs := make(chan job, 1024)
-	results := make(chan int, 1024)
 
+	var largestArea int64 = 0
 	var wg sync.WaitGroup
 
 	wg.Add(numWorkers)
-
 	for w := 0; w < numWorkers; w++ {
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
 				sq := Square{points[job.i], points[job.j]}
-				fmt.Printf("Checking Square (%d,%d) (%d,%d)\n", points[job.i].X, points[job.i].Y, points[job.j].X, points[job.j].Y)
+				sqArea := sq.Area()
+
+				currentMax := atomic.LoadInt64(&largestArea)
+				if int64(sqArea) <= currentMax {
+					continue
+				}
 
 				if !RectangleInsidePolygon(sq, points) {
 					continue
 				}
 
-				results <- sq.Area()
+				for {
+					currentMax := atomic.LoadInt64(&largestArea)
+					if int64(sqArea) <= currentMax {
+						break
+					}
+					if atomic.CompareAndSwapInt64(&largestArea, currentMax, int64(sqArea)) {
+						break
+					}
+				}
 			}
 		}()
 	}
@@ -145,18 +158,7 @@ func part2() {
 		close(jobs)
 	}()
 
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	largestArea := 0
-
-	for area := range results {
-		if area > largestArea {
-			largestArea = area
-		}
-	}
+	wg.Wait()
 
 	fmt.Println("Part2")
 	fmt.Printf("Result: %d\n", largestArea)
